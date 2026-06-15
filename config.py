@@ -1,12 +1,8 @@
 import os
 from pymongo import MongoClient
 
-# 👑 GLOBAL OWNER IDs LIST (Yahan apni dono/sabhi IDs daal dein)
-# Agar aapki ID change hui hai toh is list me apni nayi id jod sakte hain
-PRIMARY_OWNER = 8705901135
-SECONDARY_OWNER = 8740539702
-
-OWNER_ID = PRIMARY_OWNER  # Backward compatibility ke liye
+# 👑 PERMANENT SINGLE OWNER ID
+OWNER_ID = 8705901135  
 
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
@@ -70,9 +66,7 @@ def save_cloud_data():
 # 💳 ECONOMY COUNTERS
 def get_user_points(user_id: int) -> int:
     if db_collection is None: return 0
-    # Agal user Owner ya Secondary Owner hai toh hamesha unlimited balance do
-    if user_id == PRIMARY_OWNER or user_id == SECONDARY_OWNER or user_id in SUDO_USERS: 
-        return 99999
+    if user_id == OWNER_ID or user_id in SUDO_USERS: return 99999
     
     try:
         res = db_collection.find_one({"_id": f"user_pts_{user_id}"})
@@ -84,9 +78,7 @@ def get_user_points(user_id: int) -> int:
 def add_user_points(user_id: int, points: int):
     if db_collection is None: return
     try:
-        if user_id == PRIMARY_OWNER or user_id == SECONDARY_OWNER or user_id in SUDO_USERS:
-            return
-            
+        if user_id == OWNER_ID or user_id in SUDO_USERS: return
         current = get_user_points(user_id)
         new_balance = current + points
         db_collection.update_one(
@@ -97,14 +89,12 @@ def add_user_points(user_id: int, points: int):
     except Exception: pass
 
 def deduct_user_point(user_id: int) -> bool:
-    if user_id == PRIMARY_OWNER or user_id == SECONDARY_OWNER or user_id in SUDO_USERS: 
-        return True
+    if user_id == OWNER_ID or user_id in SUDO_USERS: return True
     if db_collection is None: return False
     
     try:
         current = get_user_points(user_id)
         if current <= 0: return False
-        
         new_balance = current - 1
         db_collection.update_one(
             {"_id": f"user_pts_{user_id}"},
@@ -115,9 +105,6 @@ def deduct_user_point(user_id: int) -> bool:
     except Exception: return False
 
 def is_authorized(user_id: int) -> bool:
-    return (user_id == PRIMARY_OWNER or 
-            user_id == SECONDARY_OWNER or 
-            user_id in SUDO_USERS or 
-            get_user_points(user_id) > 0)
+    return user_id == OWNER_ID or user_id in SUDO_USERS or get_user_points(user_id) > 0
 
 fetch_cloud_data()

@@ -2,6 +2,8 @@
 import asyncio
 import sys
 import os
+from flask import Flask
+from threading import Thread
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
@@ -10,6 +12,18 @@ from Zelmo.rtmain import bot
 from Zelmo.rtdb import userbot
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+
+# 🌐 Dummy Web Server to bypass Render Web Service port check
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running 24/7 on Free Instance!"
+
+def run_flask():
+    # Render automatic PORT env variable deta hai, default 10000 use hoga
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 async def main():
     loop = asyncio.get_running_loop()
@@ -33,8 +47,12 @@ async def main():
 
     asyncio.create_task(userbot.old_requests_cleaner(user_clients))
     
-    print(f"🚀 Master Multi-ID Engine Online! Active IDs: {len(user_clients)}")
+    print(f"🚀 Master Multi-ID Engine Online on Web Service! Active IDs: {len(user_clients)}")
     await bot_client.run_until_disconnected()
 
 if __name__ == "__main__":
+    # 🧵 Flask server ko alag thread me start karenge taaki port check pass ho jaye
+    Thread(target=run_flask).start()
+    # 🤖 Main Telegram Bot engine run karenge
     asyncio.run(main())
+    

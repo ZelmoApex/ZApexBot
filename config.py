@@ -1,8 +1,12 @@
 import os
 from pymongo import MongoClient
 
-# Permanent Owner ID (Iske liye sab kuch free aur unlimited hai)
-OWNER_ID = 8705901135  
+# 👑 GLOBAL OWNER IDs LIST (Yahan apni dono/sabhi IDs daal dein)
+# Agar aapki ID change hui hai toh is list me apni nayi id jod sakte hain
+PRIMARY_OWNER = 8705901135
+SECONDARY_OWNER = 8740539702
+
+OWNER_ID = PRIMARY_OWNER  # Backward compatibility ke liye
 
 API_ID = int(os.environ.get("TELEGRAM_API_ID", 0))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
@@ -20,17 +24,17 @@ IS_FORWARDER_ACTIVE = True
 IS_APPROVAL_ACTIVE = True
 
 SUDO_USERS = []
-
-# Dynamic Global Lists (MongoDB Cloud se sync hongi)
-CONNECTED_SESSIONS = []  # List format: [{"session": "...", "name": "..."}]
-TARGET_GROUPS = []       # List format: ["@grp1", "@grp2", "-100..."]
-APPROVAL_CHATS = []      # Auto-approval channel/group links list
+CONNECTED_SESSIONS = []  
+TARGET_GROUPS = []       
+APPROVAL_CHATS = []      
 
 db_collection = None
 if MONGO_URL:
     try:
         mongo_client = MongoClient(MONGO_URL)
-        db_collection = mongo_client["telegram_bot"]["settings"]
+        db = mongo_client["telegram_bot"]
+        db_collection = db["settings"]
+        print("🟢 MongoDB Connected Successfully!")
     except Exception as e:
         print(f"❌ MongoDB Connection Error: {e}")
 
@@ -63,35 +67,57 @@ def save_cloud_data():
     except Exception as e: pass
     return False
 
-# 💳 ECONOMY COUNTERS (Points Database)
+# 💳 ECONOMY COUNTERS
 def get_user_points(user_id: int) -> int:
     if db_collection is None: return 0
-    if user_id == OWNER_ID or user_id in SUDO_USERS: return 99999
-    res = db_collection.find_one({"_id": f"user_pts_{user_id}"})
-    return res.get("points", 0) if res else 0
+    # Agal user Owner ya Secondary Owner hai toh hamesha unlimited balance do
+    if user_id == PRIMARY_OWNER or user_id == SECONDARY_OWNER or user_id in SUDO_USERS: 
+        return 99999
+    
+    try:
+        res = db_collection.find_one({"_id": f"user_pts_{user_id}"})
+        if res and "points" in res:
+            return int(res["points"])
+    except Exception: pass
+    return 0
 
 def add_user_points(user_id: int, points: int):
     if db_collection is None: return
-    current = get_user_points(user_id) if not (user_id == OWNER_ID or user_id in SUDO_USERS) else 0
-    db_collection.update_one(
-        {"_id": f"user_pts_{user_id}"},
-        {"$set": {"points": current + points}},
-        upsert=True
-    )
+    try:
+        if user_id == PRIMARY_OWNER or user_id == SECONDARY_OWNER or user_id in SUDO_USERS:
+            return
+            
+        current = get_user_points(user_id)
+        new_balance = current + points
+        db_collection.update_one(
+            {"_id": f"user_pts_{user_id}"},
+            {"$set": {"points": int(new_balance)}},
+            upsert=True
+        )
+    except Exception: pass
 
 def deduct_user_point(user_id: int) -> bool:
-    if user_id == OWNER_ID or user_id in SUDO_USERS: return True
-    current = get_user_points(user_id)
-    if current <= 0: return False
-    db_collection.update_one(
-        {"_id": f"user_pts_{user_id}"},
-        {"$set": {"points": current - 1}},
-        upsert=True
-    )
-    return True
+    if user_id == PRIMARY_OWNER or user_id == SECONDARY_OWNER or user_id in SUDO_USERS: 
+        return True
+    if db_collection is None: return False
+    
+    try:
+        current = get_user_points(user_id)
+        if current <= 0: return False
+        
+        new_balance = current - 1
+        db_collection.update_one(
+            {"_id": f"user_pts_{user_id}"},
+            {"$set": {"points": int(new_balance)}},
+            upsert=True
+        )
+        return True
+    except Exception: return False
 
 def is_authorized(user_id: int) -> bool:
-    return user_id == OWNER_ID or user_id in SUDO_USERS or get_user_points(user_id) > 0
+    return (user_id == PRIMARY_OWNER or 
+            user_id == SECONDARY_OWNER or 
+            user_id in SUDO_USERS or 
+            get_user_points(user_id) > 0)
 
 fetch_cloud_data()
-      

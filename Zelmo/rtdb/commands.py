@@ -46,8 +46,11 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
     @bot_client.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
         sender = event.sender_id
-        if config.is_authorized(sender):
+        # Strict Owner check for Admin Panel
+        if sender == config.OWNER_ID or sender in config.SUDO_USERS:
             await event.respond(messages.START_TITLE, buttons=buttons.get_dashboard_buttons())
+        elif config.get_user_points(sender) > 0:
+            await event.respond("🚀 **Welcome back!**\nAapka balance active hai. Use `/brod <message>` to broadcast.")
         else:
             await event.respond(messages.get_premium_pitch(sender), buttons=buttons.get_premium_buttons())
 
@@ -71,8 +74,10 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
     async def callback_handler(event):
         sender = event.sender_id
         if event.data == b"check_status":
-            if config.is_authorized(sender):
+            if sender == config.OWNER_ID or sender in config.SUDO_USERS:
                 return await event.edit(messages.format_status_text(sender), buttons=buttons.get_dashboard_buttons())
+            elif config.get_user_points(sender) > 0:
+                return await event.answer(f"💰 Balance: {config.get_user_points(sender)} Points", alert=True)
             else:
                 return await event.edit(messages.get_premium_pitch(sender), buttons=buttons.get_premium_buttons())
                 
@@ -95,20 +100,18 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
         if text.startswith("/brod "):
             promo_msg = text.replace("/brod ", "").strip()
             if not promo_msg:
-                return await event.respond("❌ Please type a message! Example: `/brod hello everyone`")
+                return await event.respond("❌ Please type a message!")
                 
             if not config.deduct_user_point(sender):
                 return await event.respond(messages.get_premium_pitch(sender), buttons=buttons.get_premium_buttons())
                 
-            progress = await event.respond("⏳ **1 Point Deducted!** Processing dynamic broadcast through all connected IDs...")
-            
+            progress = await event.respond("⏳ Processing broadcast through all connected IDs...")
             sent_count = 0
             if not user_clients:
-                return await progress.edit("❌ System Error: Bot mein koi active ID connected nahi hai. Admin ko kahein.")
+                return await progress.edit("❌ System Error: No active IDs connected.")
             if not config.TARGET_GROUPS:
-                return await progress.edit("❌ System Error: Target groups list khali hai.")
+                return await progress.edit("❌ System Error: Target groups list is empty.")
 
-            # Sabhi IDs se sabhi targets me send hoga
             for client_idx, client in user_clients.items():
                 for target in config.TARGET_GROUPS:
                     try:
@@ -118,15 +121,75 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
                     except Exception: pass
                     await asyncio.sleep(random.uniform(1.0, 2.5))
                         
-            await progress.edit(f"✅ **Dynamic Broadcast Done!**\nSent via `{len(user_clients)}` IDs to `{sent_count}` destinations.\n💰 **Balance:** `{config.get_user_points(sender)} Points`.")
+            await progress.edit(f"✅ **Broadcast Done!** Total Sent: `{sent_count}` destinations.")
             return
 
-        # 🛑 RESTRICED OWNER/SUDO ONLY INTERNAL ENGINE CONFIGURATIONS
+        # 🛑 SECURITY: STRICT OWNER/SUDO VALIDATION
         if sender != config.OWNER_ID and sender not in config.SUDO_USERS:
             return
 
-        # Smart Distributed Joiner Operation Code
-        if text.startswith("/join_all "):
+        # FIXED DYNAMIC POINTS ADDER WITH LIVE FORCE WRITE
+        if text.startswith("/add_points"):
+            try:
+                parts = text.split()
+                if len(parts) < 3:
+                    return await event.respond("❌ Format: `/add_points <user_id> <points>`")
+                
+                target_user = int(parts[1])
+                pts_to_add = int(parts[2])
+                
+                config.add_user_points(target_user, pts_to_add)
+                verified_pts = config.get_user_points(target_user)
+                
+                await event.respond(f"✅ **Points Loaded Successfully!**\n👤 User ID: `{target_user}`\n📊 Total Current Balance: `{verified_pts} Points`")
+                try:
+                    await bot_client.send_message(target_user, f"🎉 **Points Loaded!**\n💰 Admin ne aapke account me `{pts_to_add}` points load kar diye hain. Use `/brod <message>` now!")
+                except Exception: pass
+            except ValueError:
+                await event.respond("❌ Numerical digits required for ID & points.")
+            except Exception as e:
+                await event.respond(f"❌ DB Write Error: {e}")
+            return
+
+        elif text.startswith("/check_points"):
+            try:
+                target_user = int(text.replace("/check_points", "").strip())
+                await event.respond(f"👤 User `{target_user}` has `{config.get_user_points(target_user)}` points.")
+            except Exception: pass
+            return
+
+        elif text.startswith("/add_sudo") or text.startswith("/del_sudo"):
+            try:
+                target_sudo = int(text.split()[1])
+                if text.startswith("/add_sudo") and target_sudo not in config.SUDO_USERS:
+                    config.SUDO_USERS.append(target_sudo); config.save_cloud_data(); await event.respond("✅ Added Sudo.")
+                elif text.startswith("/del_sudo") and target_sudo in config.SUDO_USERS:
+                    config.SUDO_USERS.remove(target_sudo); config.save_cloud_data(); await event.respond("🗑️ Removed Sudo.")
+            except Exception: pass
+            return
+
+        if text.startswith("/add_id "):
+            session = text.replace("/add_id ", "").strip()
+            if session: await add_new_user_client(session, event, user_clients, loop)
+            
+        elif text.startswith("/add_group "):
+            args = text.replace("/add_group ", "").strip()
+            if args:
+                new_groups = [config.parse_chat_identifier(g) for g in args.split(",") if g.strip()]
+                for g in new_groups:
+                    if g not in config.TARGET_GROUPS: config.TARGET_GROUPS.append(g)
+                config.save_cloud_data()
+                await event.respond(f"✅ Target groups updated! Total: `{len(config.TARGET_GROUPS)}` groups.")
+                
+        elif text.startswith("/add_approve "):
+            arg = text.replace("/add_approve ", "").strip()
+            if arg:
+                if arg not in config.APPROVAL_CHATS: config.APPROVAL_CHATS.append(config.parse_chat_identifier(arg))
+                config.save_cloud_data()
+                await event.respond(f"✅ Approval link updated!")
+
+        # Distributed Joiner Command 
+        elif text.startswith("/join_all "):
             raw_links = text.replace("/join_all ", "").strip()
             links_list = [l.strip() for l in re.split(r'[,\n]', raw_links) if l.strip()]
             
@@ -141,7 +204,7 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
             progress = await event.respond(
                 f"🤖 **Smart Distributed Joiner Started!**\n"
                 f"📋 Total Links: `{total_links}` | 👤 Active IDs: `{total_ids}`\n\n"
-                f"🛡️ **Anti-Ban Shield:** Har ID ko alalag groups milega. Sabhi IDs sabhi groups me nahi jayengi!"
+                f"🛡️ **Anti-Ban Shield Active!**"
             )
 
             client_keys = list(user_clients.keys())
@@ -152,14 +215,13 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
                 me = await client.get_me()
                 client_name = me.first_name
                 
-                # Dynamic Slicing Strategy (Kaam Baantna)
                 start_slice = int((rank / total_ids) * total_links)
                 end_slice = int(((rank + 1) / total_ids) * total_links)
                 my_assigned_links = links_list[start_slice:end_slice]
                 
                 if not my_assigned_links: continue
                     
-                await bot_client.send_message(sender, f"⏳ **ID {rank+1}/{total_ids} [{client_name}]** ne apne hisse ke `{len(my_assigned_links)}` groups process karna shuru kiya...")
+                await bot_client.send_message(sender, f"⏳ **ID {rank+1}/{total_ids} [{client_name}]** ne kaam shuru kiya...")
                 
                 success_join = 0
                 request_sent = 0
@@ -194,7 +256,6 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
                     except Exception:
                         failed_count += 1
                         
-                    # 🛡️ Telegram Anti-Ban Delay Space (15-35s)
                     await asyncio.sleep(random.uniform(15.0, 35.0))
                 
                 id_report = f"👤 **ID:** {client_name}\n🟢 Joined: `{success_join}` | 📩 Request Sent: `{request_sent}` | ❌ Failed: `{failed_count}`"
@@ -206,57 +267,6 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
             await progress.edit(final_report_text)
             return
 
-        # Other standard admin tasks
-        if text.startswith("/add_points"):
-            try:
-                parts = text.split()
-                target_user = int(parts[1])
-                pts_to_add = int(parts[2])
-                config.add_user_points(target_user, pts_to_add)
-                await event.respond(f"✅ Points Added successfully.")
-                try: await bot_client.send_message(target_user, f"🎉 **Points Loaded!** Use `/brod <message>` now!")
-                except Exception: pass
-            except Exception: pass
-            return
-
-        elif text.startswith("/check_points"):
-            try:
-                target_user = int(text.replace("/check_points", "").strip())
-                await event.respond(f"👤 User `{target_user}` has `{config.get_user_points(target_user)}` points.")
-            except Exception: pass
-            return
-
-        elif text.startswith("/add_sudo") or text.startswith("/del_sudo"):
-            if sender != config.OWNER_ID: return
-            try:
-                target_sudo = int(text.split()[1])
-                if text.startswith("/add_sudo") and target_sudo not in config.SUDO_USERS:
-                    config.SUDO_USERS.append(target_sudo); config.save_cloud_data(); await event.respond("✅ Added Sudo.")
-                elif text.startswith("/del_sudo") and target_sudo in config.SUDO_USERS:
-                    config.SUDO_USERS.remove(target_sudo); config.save_cloud_data(); await event.respond("🗑️ Removed Sudo.")
-            except Exception: pass
-            return
-
-        if text.startswith("/add_id "):
-            session = text.replace("/add_id ", "").strip()
-            if session: await add_new_user_client(session, event, user_clients, loop)
-            
-        elif text.startswith("/add_group "):
-            args = text.replace("/add_group ", "").strip()
-            if args:
-                new_groups = [config.parse_chat_identifier(g) for g in args.split(",") if g.strip()]
-                for g in new_groups:
-                    if g not in config.TARGET_GROUPS: config.TARGET_GROUPS.append(g)
-                config.save_cloud_data()
-                await event.respond(f"✅ Target groups updated! Total saved: `{len(config.TARGET_GROUPS)}` groups.")
-                
-        elif text.startswith("/add_approve "):
-            arg = text.replace("/add_approve ", "").strip()
-            if arg:
-                if arg not in config.APPROVAL_CHATS: config.APPROVAL_CHATS.append(config.parse_chat_identifier(arg))
-                config.save_cloud_data()
-                await event.respond(f"✅ Approval link updated!")
-
         elif text == "/clear_all":
             for cl in user_clients.values():
                 try: await cl.disconnect()
@@ -267,3 +277,4 @@ def register_all_commands(bot_client: TelegramClient, user_clients, loop):
             config.APPROVAL_CHATS = []
             config.save_cloud_data()
             await event.respond(messages.RESET_SUCCESS)
+        
